@@ -1,7 +1,7 @@
 'use strict';
 // 骰子遊戲伺服器(零依賴,Node 18+):紅黑大小單雙、吹牛
 const http = require('http'), fs = require('fs'), path = require('path');
-const PORT = process.env.PORT || 3000, TURN_MS = 30000, REVEAL_MS = 8000;
+const PORT = process.env.PORT || 3000, TURN_MS = 30000;
 const isRed = d => d == 1 || d == 4;
 const CATS = {
   red: { n: '紅', f: isRed }, black: { n: '黑', f: d => !isRed(d) },
@@ -19,7 +19,7 @@ function newRoom(max, mode) {
   do code = String(100000 + Math.floor(Math.random() * 900000)); while (rooms.has(code));
   const r = {
     code, mode, max, phase: 'lobby', host: null, players: [], turn: -1, reveal: -1,
-    showAll: false, bid: null, loser: null, winner: '', result: '', nextStarter: null,
+    showAll: false, bid: null, loser: null, loserName: '', winner: '', result: '',
     msg: '', logs: [], lost: [], deadline: 0, timer: null, busy: false, last: Date.now()
   };
   rooms.set(code, r);
@@ -32,8 +32,8 @@ function view(r, pid) {
   const liar = r.mode === 'liar';
   return {
     code: r.code, mode: r.mode, max: r.max, phase: r.phase, host: r.host, me: pid, turn: r.turn,
-    msg: r.msg, logs: r.logs, lost: r.lost, deadline: r.deadline, now: Date.now(),
-    bid: r.bid, showAll: r.showAll, loser: r.loser, winner: r.winner, result: r.result,
+    msg: r.msg, logs: r.logs, lost: r.lost, lostIds: r.lostIds || [], deadline: r.deadline, now: Date.now(),
+    bid: r.bid, showAll: r.showAll, loser: r.loser, loserName: r.loserName, winner: r.winner, result: r.result,
     players: r.players.map((p, i) => ({
       id: p.id, name: p.name, online: !!p.res,
       n: liar ? (p.cnt || 0) : p.dice.length,
@@ -98,7 +98,7 @@ async function call(r, k) {
   log(r, `拿掉「${c.n}」:${cut.length ? cut.join(',') + ' 顆' : '沒有人被拿掉骰子'}`);
   const lost = r.players.filter(x => !x.dice.length);
   if (lost.length) {
-    r.phase = 'over'; r.lost = lost.map(x => x.name); r.turn = -1; r.reveal = -1;
+    r.phase = 'over'; r.lost = lost.map(x => x.name); r.lostIds = lost.map(x => x.id); r.turn = -1; r.reveal = -1;
     r.msg = `${r.lost.join('、')}的骰子被拿光,輸了!`;
   } else {
     r.turn = (i + 1) % r.players.length;
@@ -114,7 +114,7 @@ async function call(r, k) {
 function liarRound(r, si) {
   if (!rooms.has(r.code) || r.phase === 'over') return;
   r.players.forEach(x => x.dice = x.cnt > 0 ? hand(x.cnt) : []);
-  r.bid = null; r.showAll = false; r.loser = null; r.result = ''; r.phase = 'play';
+  r.bid = null; r.showAll = false; r.loser = null; r.loserName = ''; r.result = ''; r.phase = 'play';
   const i = aliveFrom(r, si < 0 ? 0 : si);
   r.turn = i;
   log(r, `新的一輪,${r.players[i].name}先叫牌`);
@@ -134,35 +134,18 @@ function liarChallenge(r, p) {
   clearTimeout(r.timer);
   const { q, f } = r.bid;
   const count = r.players.reduce((s, x) => s + x.dice.filter(d => d === f || (d === 1 && f !== 1)).length, 0);
-  const ok = count >= q;
+  const ok = count >= q;   // 場上數量夠:叫牌成立,開牌的人敗;不夠:叫牌的人敗
   const bidder = r.players.find(x => x.id === r.bid.by);
   const loser = ok ? p : bidder;
-  r.showAll = true; r.phase = 'reveal'; r.turn = -1;
-  let res = `${p.name}開牌!全場有 ${count} 個 ${f} 點${f === 1 ? '' : '(含百搭 1)'},${r.bid.name}叫了 ${q} 個,叫牌${ok ? '成立' : '不成立'}。`;
-  if (loser) {
-    loser.cnt--; r.loser = loser.id;
-    res += `${loser.name}失去一顆骰子${loser.cnt === 0 ? ',出局' : ''}。`;
-  } else res += '叫牌的人已離開,這輪不扣骰子。';
-  r.result = res; log(r, res);
-  r.nextStarter = loser ? loser.id : p.id;
-  const alive = r.players.filter(x => x.cnt > 0);
-  if (alive.length < 2) { endLiar(r, alive[0]); return; }
-  r.deadline = Date.now() + REVEAL_MS;
-  r.timer = setTimeout(() => nextRound(r), REVEAL_MS);
-  push(r);
+  r.showAll = true; r.phase = 'over'; r.turn = -1; r.deadline = 0;
+  r.loser = loser ? loser.id : null; r.loserName = loser ? loser.name : '';
+  r.result = `${p.name}開牌!全場有 ${count} 個 ${f} 點${f === 1 ? '' : '(含百搭 1)'},${r.bid.name}叫了 ${q} 個,叫牌${ok ? '成立' : '不成立'}。` + (loser ? `${loser.name}敗!` : '叫牌的人已離開。');
+  log(r, r.result); push(r);
 }
-function nextRound(r) {
-  if (!rooms.has(r.code) || r.phase !== 'reveal') return;
+function endLiar(r) {
   clearTimeout(r.timer);
-  const si = r.players.findIndex(x => x.id === r.nextStarter);
-  liarRound(r, si < 0 ? 0 : si);
-}
-function endLiar(r, w) {
-  clearTimeout(r.timer);
-  r.phase = 'over'; r.turn = -1; r.deadline = 0;
-  r.winner = w ? w.name : '';
-  r.msg = w ? `${w.name}獲勝!` : '遊戲結束';
-  log(r, r.msg); push(r);
+  r.phase = 'over'; r.turn = -1; r.deadline = 0; r.loser = null; r.loserName = ''; r.result = '';
+  log(r, '有玩家離開,遊戲結束'); push(r);
 }
 
 /* ---------- 房間管理 ---------- */
@@ -175,13 +158,10 @@ function removePlayer(r, id) {
   if (!r.players.length) { clearTimeout(r.timer); rooms.delete(r.code); return; }
   if (r.host === id) r.host = r.players[0].id;
   if (r.mode === 'liar') {
-    if (r.phase === 'play' || r.phase === 'reveal') {
-      const alive = r.players.filter(p => p.cnt > 0);
-      if (alive.length < 2) { endLiar(r, alive[0]); return; }
-      if (r.phase === 'play') {
-        if (cur && cur.id === id) { r.turn = aliveFrom(r, idx % r.players.length); startTurn(r); }
-        else r.turn = r.players.indexOf(cur);
-      }
+    if (r.phase === 'play') {
+      if (r.players.length < 2) { endLiar(r); return; }
+      if (cur && cur.id === id) { r.turn = idx % r.players.length; startTurn(r); }
+      else r.turn = r.players.indexOf(cur);
     }
     push(r); return;
   }
@@ -197,7 +177,7 @@ function act(r, p, b) {
   r.last = Date.now();
   const isHost = r.host === p.id, liar = r.mode === 'liar', myTurn = r.players[r.turn] === p;
   if (b.t === 'start' && isHost && r.phase === 'lobby' && r.players.length > 1) {
-    r.logs = []; r.lost = []; r.winner = '';
+    r.logs = []; r.lost = []; r.lostIds = []; r.winner = '';
     if (liar) { r.players.forEach(x => x.cnt = 5); liarRound(r, 0); return; }
     r.players.forEach(x => x.dice = hand());
     r.phase = 'play'; r.turn = 0; r.reveal = 0; log(r, `輪到${r.players[0].name}`);
@@ -207,7 +187,7 @@ function act(r, p, b) {
     if (!rooms.has(r.code)) return;
     clearTimeout(r.timer);
     r.phase = 'lobby'; r.turn = -1; r.reveal = -1; r.msg = ''; r.logs = []; r.bid = null; r.showAll = false;
-    r.loser = null; r.winner = ''; r.result = ''; r.deadline = 0;
+    r.loser = null; r.loserName = ''; r.lost = []; r.lostIds = []; r.winner = ''; r.result = ''; r.deadline = 0;
     r.players.forEach(x => { x.dice = []; x.cnt = 0; });
   } else if (!liar && b.t === 'call' && r.phase === 'play' && !r.busy && myTurn && CATS[b.k]) {
     call(r, b.k); return;
@@ -215,8 +195,6 @@ function act(r, p, b) {
     liarBid(r, p, +b.q, +b.f); return;
   } else if (liar && b.t === 'challenge' && r.phase === 'play' && myTurn) {
     liarChallenge(r, p); return;
-  } else if (liar && b.t === 'next' && r.phase === 'reveal' && isHost) {
-    nextRound(r); return;
   } else if (b.t === 'leave') { removePlayer(r, p.id); return; }
   push(r);
 }

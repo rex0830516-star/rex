@@ -141,6 +141,8 @@ button:focus-visible,input:focus-visible,a:focus-visible{outline:2px solid var(-
 .fb.on{background:var(--selected);border-color:var(--selected-line);color:var(--link)}
 .fb.on.red{background:var(--danger-surface);border-color:var(--danger-line);color:var(--danger-ink)}
 .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.verdict{display:flex;align-items:center;gap:14px;background:var(--danger-surface);border:1px solid var(--danger-line);border-radius:18px;padding:12px 20px;margin:14px 0 4px;color:var(--danger-ink);font-size:14px;font-weight:600}
+.verdict b{font-size:28px;line-height:1.3}
 #log{margin:20px 0 0;padding:0;list-style:none;color:var(--muted);font-size:13px}
 #log li{padding:2px 0}
 #log li:first-child{color:var(--ink)}
@@ -245,7 +247,7 @@ function cards(meIdx){
   return '<div class="grid">'+ordered(meIdx).map(({p,i})=>{
     const liar=S.mode==='liar',out=liar&&p.n===0;
     const cur=liar?(S.phase==='play'&&i===S.turn):(i===S.turn);
-    const lost=liar&&S.phase==='reveal'&&S.loser===p.id;
+    const lost=S.phase==='over'&&(liar?S.loser===p.id:(S.lostIds||[]).includes(p.id));
     return `<div class="pl${cur?' cur':''}${lost?' lost':''}${i===meIdx?' me':''}${(p.online&&!out)?'':' off'}"><div class="nm">${esc(p.name)}${p.id===S.me?'(你)':''}<small>${p.online?'':'離線 · '}${out?'出局':p.n+' 顆'}</small></div><div class="dice">${diceHtml(p)}</div></div>`;
   }).join('')+'</div>';
 }
@@ -295,7 +297,8 @@ function render(){
   if(!liar){
     const myTurn=S.phase==='play'&&S.turn===meIdx;
     const mine=S.players[meIdx]||{dice:null,n:0},mineDice=mine.dice||[],blind=mine.n===1;
-    a.innerHTML=shell(head+cards(meIdx)+`<div id="msg">${esc(myTurn?(blind?'輪到你:只剩一顆,盲猜要拿掉哪一種':'輪到你:選一個要拿掉的'):S.msg)} <span id="clock" class="note"></span>${again}</div>
+    const verdict=(over&&S.lost&&S.lost.length)?`<div class="verdict"><span>敗者</span><b>${esc(S.lost.join('、'))}</b></div>`:'';
+    a.innerHTML=shell(head+cards(meIdx)+verdict+`<div id="msg">${esc(myTurn?(blind?'輪到你:只剩一顆,盲猜要拿掉哪一種':'輪到你:選一個要拿掉的'):S.msg)} <span id="clock" class="note"></span>${again}</div>
     <div id="acts">${KEYS.map(k=>{const c=CATS[k],own=mineDice.filter(c.f).length,risk=!blind&&mineDice.length&&own===mineDice.length;
       return `<button class="a ${k}" ${myTurn?'':'disabled'} onclick="act({t:'call',k:'${k}'})">${c.n}<small>${blind?'盲猜':(risk?`會拿光你的 ${own} 顆`:`拿掉你的 ${own} 顆`)}</small></button>`;}).join('')}</div>
     <ul id="log">${S.logs.slice().reverse().map(t=>`<li>${esc(t)}</li>`).join('')}</ul>`,true);
@@ -310,18 +313,17 @@ function render(){
   const valid=sel.q>=1&&sel.q<=total&&(!S.bid||sel.q>S.bid.q||(sel.q===S.bid.q&&sel.f>S.bid.f));
   const minQ=S.bid?S.bid.q:1;
   const bid=S.bid?`<div class="bid"><span>${esc(S.bid.name)} 叫</span><span>${S.bid.q} 個 ${S.bid.f} 點</span>${dieEl(S.bid.f,true)}</div>`:(S.phase==='play'?'<div class="bid none">還沒有人叫牌</div>':'');
+  const verdict=(over&&S.loserName)?`<div class="verdict"><span>敗者</span><b>${esc(S.loserName)}</b></div>`:'';
   const ctl=myTurn?`<div class="ctl"><div class="step"><button onclick="setQ(-1)" ${sel.q>minQ?'':'disabled'} aria-label="減少數量">−</button><b>${sel.q}</b><button onclick="setQ(1)" ${sel.q<total?'':'disabled'} aria-label="增加數量">＋</button><span class="note">個(場上共 ${total} 顆)</span></div>
     <div class="faces">${[1,2,3,4,5,6].map(f=>`<button class="fb${isRed(f)?' red':''}${sel.f===f?' on':''}" onclick="setF(${f})" aria-label="${f} 點">${f}</button>`).join('')}</div>
     ${(!valid&&S.bid)?'<div class="note">要比上一個叫牌更大:數量更多,或數量相同、點數更大。</div>':''}
     <div class="row"><button class="go" ${valid?'':'disabled'} onclick="doBid()">叫牌</button><button class="btn" style="min-height:44px" ${S.bid?'':'disabled'} onclick="act({t:'challenge'})">開牌</button></div></div>`:'';
   let msg;
-  if(S.phase==='reveal')msg=S.result;
-  else if(over)msg=S.msg;
+  if(over)msg=S.result||S.msg;
   else if(me.n===0)msg='你已出局,繼續觀戰';
   else if(myTurn)msg=S.bid?'輪到你:叫更大的牌,或開上一位的牌':'輪到你:先叫牌';
   else msg='輪到'+(cur?cur.name:'');
-  const next=(S.phase==='reveal'&&isHost)?'<div style="margin-top:10px"><button class="btn" onclick="act({t:\'next\'})">立刻下一輪</button></div>':'';
-  a.innerHTML=shell(head+cards(meIdx)+bid+`<div id="msg">${esc(msg)} <span id="clock" class="note"></span>${next}${again}</div>${ctl}
+  a.innerHTML=shell(head+cards(meIdx)+verdict+bid+`<div id="msg">${esc(msg)} <span id="clock" class="note"></span>${again}</div>${ctl}
   <ul id="log">${S.logs.slice().reverse().map(t=>`<li>${esc(t)}</li>`).join('')}</ul>`,true);
 }
 
@@ -329,7 +331,7 @@ clearInterval(tick);
 tick=setInterval(()=>{
   const c=$('clock');if(!c||!S||!S.deadline){if(c)c.textContent='';return;}
   const s=Math.max(0,Math.ceil((S.deadline-(Date.now()+offset))/1000));
-  c.textContent=S.phase==='reveal'?`(${s} 秒後下一輪)`:`(${s} 秒)`;
+  c.textContent=`(${s} 秒)`;
 },500);
 
 (function init(){
