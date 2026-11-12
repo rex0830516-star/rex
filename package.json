@@ -1,0 +1,8 @@
+{
+  "name": "hongxi-dice",
+  "version": "1.0.0",
+  "description": "紅黑大小單雙 多人連線骰子遊戲",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "engines": { "node": ">=18" }
+}

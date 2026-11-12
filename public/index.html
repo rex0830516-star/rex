@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>紅黑大小單雙</title>
+<style>
+:root{--bg:#e4ebe6;--panel:#f6f9f7;--ink:#14201a;--mut:#5b6b62;--line:#c3d0c8;--red:#c8322d;--blk:#161a18;--die:#fbf8ef;--ok:#1f7a4d;--bad:#b3261e;color-scheme:light}
+@media (prefers-color-scheme:dark){:root{--bg:#0e1713;--panel:#16221c;--ink:#e8efe9;--mut:#93a69b;--line:#2a3b32;--ok:#5ec48f;--bad:#ff8a80;color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 "Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif}
+main{max-width:640px;margin:0 auto;padding:20px 16px 40px}
+h1{font-size:28px;margin:0 0 4px;letter-spacing:.08em;font-weight:800}
+h1 b{color:var(--red)}
+.sub{color:var(--mut);margin:0 0 16px;font-size:14px}
+.box{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:12px}
+.box h2{font-size:16px;margin:0 0 10px}
+input{font:inherit;width:100%;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--ink);margin-bottom:10px}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
+button{font:inherit;cursor:pointer;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:9px 16px}
+button.on{border-color:var(--red);box-shadow:inset 0 0 0 1px var(--red)}
+button.go{background:var(--red);border-color:var(--red);color:#fff;font-weight:700}
+button:disabled{opacity:.4;cursor:not-allowed}
+button:focus-visible,input:focus-visible{outline:3px solid var(--ok);outline-offset:2px}
+.code{font-size:34px;font-weight:800;letter-spacing:.2em;color:var(--red)}
+.pl{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-bottom:10px}
+.pl.cur{border-color:var(--red);box-shadow:0 0 0 2px var(--red)}
+.nm{font-weight:700;display:flex;justify-content:space-between;align-items:baseline}
+.nm small{color:var(--mut);font-weight:400}
+.off{opacity:.55}
+.dice{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;min-height:52px;align-items:center}
+.dice em{color:var(--bad);font-style:normal}
+.die{width:48px;height:48px;border-radius:10px;background:var(--die);display:grid;place-items:center;font-size:40px;line-height:1;border:1px solid #cfc8b2}
+.die.r{color:var(--red)}.die.b{color:var(--blk)}.die.h{background:var(--ink);color:var(--panel);font-size:22px;border-color:var(--ink);opacity:.85}
+#msg{margin:14px 0 10px;font-weight:700;min-height:26px}
+#acts{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.a{border-radius:14px;padding:14px 8px;font-size:34px;font-weight:800;line-height:1.1}
+.a small{display:block;font-size:12px;font-weight:400;margin-top:4px}
+.a.red{background:var(--red);color:#fff;border-color:var(--red)}
+.a.black{background:var(--blk);color:#fff;border-color:var(--blk)}
+#log{margin:18px 0 0;padding:0;list-style:none;color:var(--mut);font-size:14px}
+#log li:first-child{color:var(--ink)}
+.note{color:var(--mut);font-size:14px}
+.err{color:var(--bad);min-height:22px}
+</style>
+</head>
+<body>
+<main>
+<h1><b>紅黑</b>大小單雙</h1>
+<p class="sub">每人五顆骰子,骰子最先被拿光的人輸。2 到 4 人連線,不用註冊。</p>
+<div id="app"></div>
+<details class="box">
+<summary><b>玩法說明</b></summary>
+<p>輪到你時亮出骰子,從紅、黑、大、小、單、雙選一個,所有人(包含你)都拿掉符合的骰子。紅是 1、4;黑是 2、3、5、6;大是 4 到 6,小是 1 到 3;單是 1、3、5,雙是 2、4、6。</p>
+<p>只剩一顆時不能看,只能盲猜;喊完才亮,相同就被拿光輸掉,不同就過關。第一個骰子被拿光的人輸。每回合 30 秒,超時系統代喊。</p>
+</details>
+</main>
+<script>
+const FACE=['','⚀','⚁','⚂','⚃','⚄','⚅'];
+const isRed=d=>d==1||d==4;
+const CATS={red:{n:'紅',f:isRed},black:{n:'黑',f:d=>!isRed(d)},odd:{n:'單',f:d=>d%2==1},even:{n:'雙',f:d=>d%2==0},big:{n:'大',f:d=>d>=4},small:{n:'小',f:d=>d<=3}};
+const KEYS=Object.keys(CATS);
+const $=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const store={get:k=>{try{return localStorage.getItem(k)}catch(e){return null}},set:(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}},del:k=>{try{localStorage.removeItem(k)}catch(e){}}};
+
+let pid=store.get('hx_pid');
+if(!pid){pid=(crypto.randomUUID?crypto.randomUUID():String(Math.random()).slice(2)+Date.now()).replace(/-/g,'');store.set('hx_pid',pid);}
+let S=null,es=null,room='',maxP=2,nick=store.get('hx_nick')||'',err='',offset=0,tick=null;
+
+async function api(path,body){
+  try{
+    const r=await fetch('/api/'+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pid,...body})});
+    const j=await r.json();
+    if(!r.ok)throw new Error(j.error||'發生錯誤');
+    return j;
+  }catch(e){err=e.message==='Failed to fetch'?'連不上伺服器':e.message;render();return null;}
+}
+
+function connect(code){
+  if(es)es.close();
+  room=code;
+  es=new EventSource(`/api/events?room=${code}&pid=${pid}`);
+  es.onmessage=e=>{S=JSON.parse(e.data);offset=S.now-Date.now();err='';store.set('hx_room',code);history.replaceState(null,'','#'+code);render();};
+  es.onerror=()=>{if(es.readyState===EventSource.CLOSED){es=null;S=null;store.del('hx_room');history.replaceState(null,'',location.pathname);err='房間已關閉或找不到,請重新建立或加入';render();}};
+}
+
+async function create(){
+  nick=($('nick').value.trim()||'玩家').slice(0,8);store.set('hx_nick',nick);
+  const j=await api('create',{name:nick,max:maxP});
+  if(j)connect(j.room);
+}
+async function join(code){
+  nick=($('nick').value.trim()||'玩家').slice(0,8);store.set('hx_nick',nick);
+  code=(code||$('code').value).trim();
+  if(!/^\d{6}$/.test(code)){err='請輸入 6 位數房間代碼';render();return;}
+  const j=await api('join',{room:code,name:nick});
+  if(j)connect(j.room);
+}
+const act=o=>api('act',{room,...o});
+function leave(){
+  if(S&&S.phase==='play'&&!confirm('遊戲進行中,確定要離開嗎?'))return;
+  act({t:'leave'});if(es)es.close();es=null;S=null;store.del('hx_room');
+  history.replaceState(null,'',location.pathname);render();
+}
+function pickMax(n){const e=$('nick');if(e)nick=e.value;maxP=n;render();}
+async function copyLink(){
+  const url=location.origin+'/#'+room;
+  try{await navigator.clipboard.writeText(url);err='';$('cp').textContent='已複製連結';}catch(e){prompt('複製這個連結傳給朋友:',url);}
+}
+const dieEl=(d,show)=>show?`<span class="die ${isRed(d)?'r':'b'}">${FACE[d]}</span>`:'<span class="die h">?</span>';
+
+function render(){
+  const a=$('app');
+  if(!S){
+    a.innerHTML=`<div class="box"><h2>怎麼稱呼你</h2><input id="nick" maxlength="8" placeholder="暱稱" value="${esc(nick)}"></div>
+    <div class="box"><h2>建立房間</h2><div class="row"><span>幾個人玩</span>${[2,3,4].map(n=>`<button class="${n==maxP?'on':''}" onclick="pickMax(${n})">${n} 人</button>`).join('')}</div><button class="go" onclick="create()">建立房間</button></div>
+    <div class="box"><h2>加入房間</h2><input id="code" inputmode="numeric" maxlength="6" placeholder="6 位數房間代碼" value="${esc(room)}"><button class="go" onclick="join()">加入房間</button></div>
+    <p class="err">${esc(err)}</p>`;
+    return;
+  }
+  const meIdx=S.players.findIndex(p=>p.id===S.me),myTurn=S.phase==='play'&&S.turn===meIdx;
+  const head=`<div class="row" style="justify-content:space-between"><span class="note">房間 ${S.code}</span><span><button id="cp" onclick="copyLink()">複製邀請連結</button> <button onclick="leave()">離開</button></span></div>`;
+  if(S.phase==='lobby'){
+    a.innerHTML=head+`<div class="box"><div class="note">把連結傳給朋友,或告訴他們代碼</div><div class="code">${esc(S.code)}</div></div>
+    <div class="box"><h2>玩家 ${S.players.length} / ${S.max}</h2>${S.players.map(p=>`<div class="${p.online?'':'off'}">${esc(p.name)}${p.id===S.me?'(你)':''}${p.id===S.host?' · 房主':''}${p.online?'':' · 離線'}</div>`).join('')}</div>
+    ${S.me===S.host?`<button class="go" ${S.players.length>1?'':'disabled'} onclick="act({t:'start'})">開始遊戲</button>`:'<p class="note">等房主開始遊戲…</p>'}<p class="err">${esc(err)}</p>`;
+    return;
+  }
+  const mine=S.players[meIdx]||{dice:[],n:0},mineDice=mine.dice||[],blind=mine.n===1;
+  const over=S.phase==='over';
+  a.innerHTML=head+S.players.map((p,i)=>`<div class="pl${i===S.turn?' cur':''}${p.online?'':' off'}"><div class="nm">${esc(p.name)}${p.id===S.me?'(你)':''}<small>${p.online?'':'離線 · '}${p.n} 顆</small></div><div class="dice">${p.dice?p.dice.map(d=>dieEl(d,true)).join(''):Array(p.n).fill(dieEl(0,false)).join('')||'<em>骰子被拿光了</em>'}</div></div>`).join('')
+  +`<div id="msg">${esc(myTurn?(blind?'輪到你:只剩一顆,盲猜要拿掉哪一種':'輪到你:選一個要拿掉的'):S.msg)} <span id="clock" class="note"></span>${over&&S.me===S.host?'<br><button class="go" onclick="act({t:\'again\'})">再玩一次</button>':''}${over&&S.me!==S.host?'<br><span class="note">等房主開始下一局</span>':''}</div>
+  <div id="acts">${KEYS.map(k=>{const c=CATS[k],own=mineDice.filter(c.f).length,risk=!blind&&mineDice.length&&own===mineDice.length;
+    return `<button class="a ${k}" ${myTurn?'':'disabled'} onclick="act({t:'call',k:'${k}'})">${c.n}<small>${blind?'盲猜':(risk?`會拿光你的 ${own} 顆`:`拿掉你的 ${own} 顆`)}</small></button>`;}).join('')}</div>
+  <ul id="log">${S.logs.slice().reverse().map(t=>`<li>${esc(t)}</li>`).join('')}</ul>`;
+}
+
+clearInterval(tick);
+tick=setInterval(()=>{
+  const c=$('clock');if(!c||!S||!S.deadline){if(c)c.textContent='';return;}
+  const s=Math.max(0,Math.ceil((S.deadline-(Date.now()+offset))/1000));c.textContent=`(${s} 秒)`;
+},500);
+
+(function init(){
+  const h=location.hash.slice(1),saved=store.get('hx_room');
+  if(/^\d{6}$/.test(h)){room=h;
+    if(saved===h)connect(h);        // 重新整理:直接回到原房間
+    else render();                  // 朋友點邀請連結:輸入暱稱後加入
+  }else if(saved){room=saved;connect(saved);}
+  else render();
+})();
+</script>
+</body>
+</html>
