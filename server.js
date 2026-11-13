@@ -1,5 +1,5 @@
 'use strict';
-// 骰子遊戲伺服器(零依賴,Node 18+):紅黑大小單雙、吹牛
+// 骰子遊戲伺服器(零依賴,Node 18+):紅黑大小單雙、吹牛、殘暴碗公
 const http = require('http'), fs = require('fs'), path = require('path');
 const PORT = process.env.PORT || 3000, TURN_MS = 30000;
 const isRed = d => d == 1 || d == 4;
@@ -20,7 +20,7 @@ function newRoom(max, mode, dice) {
   const r = {
     code, mode, max, dice, phase: 'lobby', host: null, players: [], turn: -1, reveal: -1,
     showAll: false, bid: null, loser: null, loserName: '', winner: '', result: '',
-    msg: '', logs: [], lost: [], deadline: 0, timer: null, busy: false, last: Date.now()
+    msg: '', logs: [], lost: [], bowl: null, rule: 'num', deadline: 0, timer: null, busy: false, last: Date.now()
   };
   rooms.set(code, r);
   return r;
@@ -31,11 +31,11 @@ const log = (r, t) => { r.logs.push(t); r.logs = r.logs.slice(-6); r.msg = t; };
 function view(r, pid) {
   const liar = r.mode === 'liar';
   return {
-    code: r.code, mode: r.mode, max: r.max, diceN: r.dice, phase: r.phase, host: r.host, me: pid, turn: r.turn,
+    code: r.code, mode: r.mode, max: r.max, diceN: r.dice, rule: r.rule, bowl: r.bowl, phase: r.phase, host: r.host, me: pid, turn: r.turn,
     msg: r.msg, logs: r.logs, lost: r.lost, lostIds: r.lostIds || [], deadline: r.deadline, now: Date.now(),
     bid: r.bid, showAll: r.showAll, loser: r.loser, loserName: r.loserName, winner: r.winner, result: r.result,
     players: r.players.map((p, i) => ({
-      id: p.id, name: p.name, online: !!p.res,
+      id: p.id, name: p.name, online: !!p.res, shots: p.shots || 0,
       n: liar ? (p.cnt || 0) : p.dice.length,
       dice: liar
         ? (((p.id === pid || r.showAll) && p.dice.length) ? p.dice : null)
@@ -62,6 +62,7 @@ function aliveFrom(r, i) {
 function autoCall(r) {   // 超時代喊,避免卡關
   const p = r.players[r.turn];
   if (r.phase !== 'play' || !p) return;
+  if (r.mode === 'bowl') return r.busy ? undefined : bowlPick(r, 1 + Math.floor(Math.random() * 6));
   if (r.mode === 'liar') {
     if (!r.bid) return liarBid(r, p, 1, 2 + Math.floor(Math.random() * 5));
     let q = r.bid.q, f = r.bid.f + 1;
@@ -107,6 +108,54 @@ async function call(r, k) {
     startTurn(r);
   }
   r.busy = false; push(r);
+}
+
+/* ---------- 殘暴碗公 ---------- */
+// 起始 3 顆骰子,輪流選 1~6 再擲骰;擲出相同點數就喝。每輪結束骰子 +1,
+// 一輪擲完時骰子數 >= 玩家人數就結束。
+const BOWL_SHOW_MS = +process.env.BOWL_MS || 5000;
+function bowlStart(r) {
+  r.players.forEach(x => { x.shots = 0; });
+  r.bowl = { n: 3, round: 1, acted: [], table: null, pick: 0, hits: 0, drink: 0, by: '', byName: '', top: 0 };
+  r.phase = 'play'; r.turn = 0; r.lost = []; r.lostIds = [];
+  log(r, `第 1 輪(3 顆骰子),輪到${r.players[0].name}`);
+  startTurn(r); push(r);
+}
+async function bowlPick(r, n) {
+  if (r.busy || r.phase !== 'play' || !r.bowl || !Number.isInteger(n) || n < 1 || n > 6) return;
+  r.busy = true; clearTimeout(r.timer); r.deadline = 0;
+  const p = r.players[r.turn], bw = r.bowl;
+  bw.table = Array.from({ length: bw.n }, () => 1 + Math.floor(Math.random() * 6));
+  bw.pick = n; bw.hits = bw.table.filter(d => d === n).length;
+  bw.drink = bw.hits ? (r.rule === 'cnt' ? bw.hits : n) : 0;
+  bw.by = p.id; bw.byName = p.name; p.shots = (p.shots || 0) + bw.drink;
+  log(r, `${p.name}選 ${n}:` + (bw.hits ? `擲出 ${bw.hits} 顆 ${n},喝 ${bw.drink} SHOT!` : `沒有 ${n},安全過關`));
+  push(r);
+  await sleep(BOWL_SHOW_MS);
+  r.busy = false;
+  if (!rooms.has(r.code) || r.phase !== 'play') return;
+  bw.acted.push(p.id); bw.table = null;
+  let from = r.players.indexOf(p);
+  from = from < 0 ? (bw.leftAt || 0) : from + 1; bw.leftAt = null;
+  bowlAdvance(r, from);
+}
+function bowlAdvance(r, from) {
+  const bw = r.bowl;
+  let j = -1;
+  for (let k = from; k < r.players.length; k++) if (!bw.acted.includes(r.players[k].id)) { j = k; break; }
+  if (j < 0) {
+    if (bw.n >= r.players.length) {
+      const top = Math.max(0, ...r.players.map(x => x.shots || 0)), who = top ? r.players.filter(x => x.shots === top) : [];
+      r.phase = 'over'; r.turn = -1; r.deadline = 0; clearTimeout(r.timer);
+      bw.top = top; r.lost = who.map(x => x.name); r.lostIds = who.map(x => x.id);
+      log(r, who.length ? `遊戲結束!${r.lost.join('、')}喝最多,共 ${top} SHOT` : '遊戲結束!沒有人需要喝酒');
+      return push(r);
+    }
+    bw.n++; bw.round++; bw.acted = []; j = 0;
+    log(r, `第 ${bw.round - 1} 輪結束,骰子增加到 ${bw.n} 顆`);
+  }
+  r.turn = j; log(r, `輪到${r.players[j].name}`);
+  startTurn(r); push(r);
 }
 
 /* ---------- 吹牛 ---------- */
@@ -157,6 +206,14 @@ function removePlayer(r, id) {
   r.players.splice(idx, 1);
   if (!r.players.length) { clearTimeout(r.timer); rooms.delete(r.code); return; }
   if (r.host === id) r.host = r.players[0].id;
+  if (r.mode === 'bowl') {
+    if (r.phase === 'play') {
+      if (r.players.length < 2) { r.phase = 'over'; r.turn = -1; r.deadline = 0; r.lost = []; r.lostIds = []; clearTimeout(r.timer); log(r, '有玩家離開,遊戲結束'); }
+      else if (cur && cur.id === id) { if (r.busy) r.bowl.leftAt = idx; else bowlAdvance(r, idx); }
+      else r.turn = r.players.indexOf(cur);
+    }
+    push(r); return;
+  }
   if (r.mode === 'liar') {
     if (r.phase === 'play') {
       if (r.players.length < 2) { endLiar(r); return; }
@@ -175,23 +232,28 @@ function removePlayer(r, id) {
 
 function act(r, p, b) {
   r.last = Date.now();
-  const isHost = r.host === p.id, liar = r.mode === 'liar', myTurn = r.players[r.turn] === p;
+  const isHost = r.host === p.id, liar = r.mode === 'liar', bowl = r.mode === 'bowl', myTurn = r.players[r.turn] === p;
   if (b.t === 'start' && isHost && r.phase === 'lobby' && r.players.length > 1) {
     r.logs = []; r.lost = []; r.lostIds = []; r.winner = '';
+    if (bowl) { bowlStart(r); return; }
     if (liar) { r.players.forEach(x => x.cnt = r.dice); liarRound(r, 0); return; }
     r.players.forEach(x => x.dice = hand(r.dice));
     r.phase = 'play'; r.turn = 0; r.reveal = r.dice > 1 ? 0 : -1; log(r, `輪到${r.players[0].name}`);
     startTurn(r);
   } else if (b.t === 'setdice' && isHost && r.phase === 'lobby') {
     r.dice = Math.min(10, Math.max(1, Math.floor(+b.n) || 5));
+  } else if (b.t === 'setrule' && isHost && r.phase === 'lobby' && bowl) {
+    r.rule = b.v === 'cnt' ? 'cnt' : 'num';
   } else if (b.t === 'again' && isHost && r.phase === 'over') {
     r.players.filter(x => !x.res).forEach(x => removePlayer(r, x.id));
     if (!rooms.has(r.code)) return;
     clearTimeout(r.timer);
     r.phase = 'lobby'; r.turn = -1; r.reveal = -1; r.msg = ''; r.logs = []; r.bid = null; r.showAll = false;
     r.loser = null; r.loserName = ''; r.lost = []; r.lostIds = []; r.winner = ''; r.result = ''; r.deadline = 0;
-    r.players.forEach(x => { x.dice = []; x.cnt = 0; });
-  } else if (!liar && b.t === 'call' && r.phase === 'play' && !r.busy && myTurn && CATS[b.k]) {
+    r.bowl = null; r.players.forEach(x => { x.dice = []; x.cnt = 0; x.shots = 0; });
+  } else if (bowl && b.t === 'pick' && r.phase === 'play' && !r.busy && myTurn) {
+    bowlPick(r, Math.floor(+b.n)); return;
+  } else if (!liar && !bowl && b.t === 'call' && r.phase === 'play' && !r.busy && myTurn && CATS[b.k]) {
     call(r, b.k); return;
   } else if (liar && b.t === 'bid' && r.phase === 'play' && myTurn) {
     liarBid(r, p, +b.q, +b.f); return;
@@ -233,7 +295,7 @@ http.createServer((req, res) => {
       const pid = String(b.pid || '').slice(0, 40);
       if (!pid) return json(res, 400, { error: '缺少 pid' });
       if (u.pathname === '/api/create') {
-        const r = newRoom(Math.min(8, Math.max(2, +b.max || 2)), b.mode === 'liar' ? 'liar' : 'rb', Math.min(10, Math.max(1, Math.floor(+b.dice) || 5)));
+        const r = newRoom(Math.min(8, Math.max(2, +b.max || 2)), b.mode === 'liar' ? 'liar' : b.mode === 'bowl' ? 'bowl' : 'rb', Math.min(10, Math.max(1, Math.floor(+b.dice) || 5)));
         r.players.push({ id: pid, name: clean(b.name), dice: [], cnt: 0, res: null }); r.host = pid;
         return json(res, 200, { room: r.code });
       }
