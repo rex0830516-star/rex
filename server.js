@@ -20,7 +20,7 @@ function newRoom(max, mode, dice) {
   const r = {
     code, mode, max, dice, phase: 'lobby', host: null, players: [], turn: -1, reveal: -1,
     showAll: false, bid: null, loser: null, loserName: '', winner: '', result: '',
-    msg: '', logs: [], lost: [], bowl: null, rule: 'num', deadline: 0, timer: null, busy: false, last: Date.now()
+    msg: '', logs: [], lost: [], bowl: null, deadline: 0, timer: null, busy: false, last: Date.now()
   };
   rooms.set(code, r);
   return r;
@@ -31,7 +31,7 @@ const log = (r, t) => { r.logs.push(t); r.logs = r.logs.slice(-6); r.msg = t; };
 function view(r, pid) {
   const liar = r.mode === 'liar';
   return {
-    code: r.code, mode: r.mode, max: r.max, diceN: r.dice, rule: r.rule, bowl: r.bowl, phase: r.phase, host: r.host, me: pid, turn: r.turn,
+    code: r.code, mode: r.mode, max: r.max, diceN: r.dice, bowl: r.bowl, phase: r.phase, host: r.host, me: pid, turn: r.turn,
     msg: r.msg, logs: r.logs, lost: r.lost, lostIds: r.lostIds || [], deadline: r.deadline, now: Date.now(),
     bid: r.bid, showAll: r.showAll, loser: r.loser, loserName: r.loserName, winner: r.winner, result: r.result,
     players: r.players.map((p, i) => ({
@@ -127,7 +127,7 @@ async function bowlPick(r, n) {
   const p = r.players[r.turn], bw = r.bowl;
   bw.table = Array.from({ length: bw.n }, () => 1 + Math.floor(Math.random() * 6));
   bw.pick = n; bw.hits = bw.table.filter(d => d === n).length;
-  bw.drink = bw.hits ? (r.rule === 'cnt' ? bw.hits : n) : 0;
+  bw.drink = bw.hits;
   bw.by = p.id; bw.byName = p.name; p.shots = (p.shots || 0) + bw.drink;
   log(r, `${p.name}選 ${n}:` + (bw.hits ? `擲出 ${bw.hits} 顆 ${n},喝 ${bw.drink} SHOT!` : `沒有 ${n},安全過關`));
   push(r);
@@ -242,8 +242,6 @@ function act(r, p, b) {
     startTurn(r);
   } else if (b.t === 'setdice' && isHost && r.phase === 'lobby') {
     r.dice = Math.min(10, Math.max(1, Math.floor(+b.n) || 5));
-  } else if (b.t === 'setrule' && isHost && r.phase === 'lobby' && bowl) {
-    r.rule = b.v === 'cnt' ? 'cnt' : 'num';
   } else if (b.t === 'again' && isHost && r.phase === 'over') {
     r.players.filter(x => !x.res).forEach(x => removePlayer(r, x.id));
     if (!rooms.has(r.code)) return;
