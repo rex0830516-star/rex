@@ -62,7 +62,7 @@ button:focus-visible,input:focus-visible,a:focus-visible{outline:2px solid var(-
 .ico:hover{background:var(--purple-surface);color:var(--link)}
 
 /* 遊戲切換 */
-.seg{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;padding:4px;border:1px solid var(--line);border-radius:14px;background:var(--card);max-width:390px;margin:0 auto}
+.seg{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;padding:4px;border:1px solid var(--line);border-radius:14px;background:var(--card);max-width:440px;margin:0 auto}
 .seg button{border:0;background:transparent;color:var(--muted);border-radius:10px;min-height:40px;font-size:14px;font-weight:600}
 .seg button.on{background:var(--seg-on);color:var(--link);box-shadow:0 2px 8px rgba(73,49,86,.06)}
 
@@ -155,6 +155,9 @@ body.rolling .dice .die:nth-child(5n){animation-duration:.29s;animation-delay:-.
 .verdict b{font-size:28px;line-height:1.3}
 .verdict.safe{background:var(--mint-surface);border-color:var(--mint-surface);color:var(--mint-ink)}
 .verdict span:last-child:not(:first-child){margin-left:auto;font-weight:500;font-size:13px}
+.sum{font-size:34px;font-weight:700;margin-top:8px;color:var(--link)}
+.sum small{font-size:13px;font-weight:400;color:var(--muted);margin-left:8px}
+body.rolling .dice.still .die{animation:none!important}
 .dice.tbl{justify-content:center;min-height:100px}
 #acts.six{grid-template-columns:repeat(3,1fr)}
 .srow{display:flex;justify-content:space-between;align-items:center;padding:6px 8px;border-bottom:1px solid var(--line)}
@@ -175,11 +178,12 @@ const FACE=['','⚀','⚁','⚂','⚃','⚄','⚅'];
 const isRed=d=>d==1||d==4;
 const CATS={red:{n:'紅',f:isRed},black:{n:'黑',f:d=>!isRed(d)},odd:{n:'單',f:d=>d%2==1},even:{n:'雙',f:d=>d%2==0},big:{n:'大',f:d=>d>=4},small:{n:'小',f:d=>d<=3}};
 const KEYS=Object.keys(CATS);
-const MODE_NAME={rb:'紅黑單雙',liar:'吹牛',bowl:'殘暴碗公'};
+const MODE_NAME={rb:'紅黑單雙',liar:'吹牛',bowl:'殘暴碗公',roll:'擲骰子'};
 const HERO={
   rb:{a:'喊一個顏色',b:'拿光別人的骰子',t:'每人一樣多的骰子,骰子最先被拿光的人輸。',chips:[{c:'p',d:[1,4]},{c:'m',d:[2,6]}]},
   liar:{a:'看不見的骰子',b:'你敢信幾成?',t:'輪流叫牌,懷疑就開,猜錯的人輸。',chips:[{c:'p',d:[4,4,1]},{c:'m',d:[4,3]}]},
   bowl:{a:'選一個數字',b:'賭你不會中',t:'輪流選 1 到 6 再擲骰,擲到一樣的點數就喝 SHOT,每輪多加一顆骰子。',chips:[{c:'p',d:[3,3,6]},{c:'m',d:[5,2]}]},
+  roll:{a:'搖一搖',b:'看看手氣',t:'自己選要擲幾顆骰子,一個人也能玩,想擲就擲。',chips:[{c:'p',d:[6,6,3]},{c:'m',d:[2,5]}]},
   invite:{a:'有人邀請你',b:'一起來玩骰子',t:'輸入暱稱,就能加入這個房間。',chips:[{c:'p',d:[1,4]},{c:'m',d:[3,6]}]}
 };
 const $=id=>document.getElementById(id);
@@ -233,8 +237,13 @@ function roll(long){
   tick();rollI=setInterval(tick,110);
   rollT=setTimeout(()=>{clearInterval(rollI);document.body.classList.remove('rolling');if(S)render();},long?1800:1300);
 }
-let prevBowl=null;
+let prevBowl=null,prevRolls=null;
 function turnSound(){
+  if(S&&S.mode==='roll'){
+    const m=S.players.find(p=>p.id===S.me),r=m?m.rolls:0;
+    if(prevRolls!==null&&r>prevRolls)roll(false);
+    prevRolls=r;return;
+  }
   if(S&&S.mode==='bowl'){
     const k=S.bowl&&S.bowl.table?S.code+'|'+S.bowl.round+'|'+S.turn:null;
     if(k&&k!==prevBowl)roll(true);
@@ -268,7 +277,7 @@ function connect(code){
 }
 function readNick(){const e=$('nick');if(e){nick=(e.value.trim()||'').slice(0,8);store.set('hx_nick',nick);}}
 function goHome(){room='';err='';history.replaceState(null,'',location.pathname);render();}
-function pickMode(m){readNick();mode=m;err='';render();}
+function pickMode(m){readNick();mode=m;err='';if(m!=='roll'&&maxP<2)maxP=2;render();}
 function setTab(t){readNick();tab=t;err='';render();}
 function pickMax(n){readNick();maxP=n;render();}
 function pickDice(n){readNick();startDice=n;render();}
@@ -331,13 +340,13 @@ function shell(inner,wide){
 function entry(a){
   const invited=/^\d{6}$/.test(room);
   const m=invited?'invite':mode,H=HERO[m],isCreate=!invited&&tab==='create';
-  const seg=invited?'':`<div class="seg">${['rb','liar','bowl'].map(k=>`<button class="${mode===k?'on':''}" onclick="pickMode('${k}')">${MODE_NAME[k]}</button>`).join('')}</div>`;
+  const seg=invited?'':`<div class="seg">${['rb','liar','bowl','roll'].map(k=>`<button class="${mode===k?'on':''}" onclick="pickMode('${k}')">${MODE_NAME[k]}</button>`).join('')}</div>`;
   const hero=`<section class="hero"><h1>${H.a}<span>${H.b}</span></h1><p>${H.t}</p></section>
   <div class="chips">${H.chips.map(c=>`<div class="chip ${c.c}">${c.d.map(d=>dieEl(d,true)).join('')}</div>`).join('<span aria-hidden="true">＋</span>')}</div>`;
   const nickBox=`<div class="lab" style="margin-top:${invited?0:16}px">怎麼稱呼你</div><input class="inp" id="nick" maxlength="8" placeholder="給自己取個暱稱" value="${esc(nick)}" onkeydown="if(event.key==='Enter')submitForm()">`;
   const body=isCreate
-    ?`${nickBox}<div class="lab">人數上限(2 人以上就能開始,不必坐滿)</div><div class="opts">${[2,3,4,5,6,7,8].map(n=>`<button class="opt${n==maxP?' on':''}" onclick="pickMax(${n})">${n} 人</button>`).join('')}</div>
-      ${mode==='bowl'?'<p class="hint" style="text-align:left">從 3 顆骰子開始,每輪加一顆,骰子數追上玩家人數的那一輪結束後遊戲結束。</p>':`<div class="lab">每人幾顆骰子</div><div class="opts d5">${[1,2,3,4,5,6,7,8,9,10].map(n=>`<button class="opt${n==startDice?' on':''}" onclick="pickDice(${n})">${n}</button>`).join('')}</div>`}
+    ?`${nickBox}<div class="lab">${mode==='roll'?'人數上限(1 人也能玩)':'人數上限(2 人以上就能開始,不必坐滿)'}</div><div class="opts">${(mode==='roll'?[1,2,3,4,5,6,7,8]:[2,3,4,5,6,7,8]).map(n=>`<button class="opt${n==maxP?' on':''}" onclick="pickMax(${n})">${n} 人</button>`).join('')}</div>
+      ${mode==='bowl'?'<p class="hint" style="text-align:left">從 3 顆骰子開始,每輪加一顆,骰子數追上玩家人數的那一輪結束後遊戲結束。</p>':`<div class="lab">${mode==='roll'?'擲幾顆骰子':'每人幾顆骰子'}</div><div class="opts d5">${[1,2,3,4,5,6,7,8,9,10].map(n=>`<button class="opt${n==startDice?' on':''}" onclick="pickDice(${n})">${n}</button>`).join('')}</div>`}
       <button class="cta" onclick="create()">建立房間 ↗</button><p class="hint">建立房間後分享連結邀請朋友,人齊就開始。</p>`
     :`${nickBox}<div class="lab">房間代碼</div><input class="inp" id="code" inputmode="numeric" maxlength="6" placeholder="6 位數房間代碼" value="${esc(room)}" onkeydown="if(event.key==='Enter')submitForm()">
       <button class="cta" onclick="join()">加入房間</button>`;
@@ -359,13 +368,25 @@ function render(){
   const head=`<div class="roomhead"><span class="tag">${MODE_NAME[S.mode]} · 房間 ${S.code}</span><span class="row"><button class="btn" id="cp" onclick="copyLink()">複製邀請連結</button><button class="btn" onclick="leave()">離開</button></span></div>`;
   if(S.phase==='lobby'){
     a.innerHTML=shell(head+`<div class="card"><div class="note">把連結傳給朋友,或告訴他們代碼</div><div class="code">${esc(S.code)}</div></div>
-    ${S.mode==='bowl'?`<div class="card"><div class="lab" style="margin-top:0">玩法</div><p class="note" style="margin:0">從 3 顆骰子開始,輪到你就選 1 到 6 再擲骰,擲出幾顆和你選的一樣,就喝幾 SHOT。每輪加一顆骰子。</p></div>`:`<div class="card"><div class="lab" style="margin-top:0">每人幾顆骰子</div>${S.me===S.host?`<div class="opts d5">${[1,2,3,4,5,6,7,8,9,10].map(n=>`<button class="opt${n==S.diceN?' on':''}" onclick="act({t:'setdice',n:${n}})">${n}</button>`).join('')}</div>`:`<div>${S.diceN} 顆</div>`}</div>`}
+    ${S.mode==='bowl'?`<div class="card"><div class="lab" style="margin-top:0">玩法</div><p class="note" style="margin:0">從 3 顆骰子開始,輪到你就選 1 到 6 再擲骰,擲出幾顆和你選的一樣,就喝幾 SHOT。每輪加一顆骰子。</p></div>`:`<div class="card"><div class="lab" style="margin-top:0">${S.mode==='roll'?'擲幾顆骰子':'每人幾顆骰子'}</div>${S.me===S.host?`<div class="opts d5">${[1,2,3,4,5,6,7,8,9,10].map(n=>`<button class="opt${n==S.diceN?' on':''}" onclick="act({t:'setdice',n:${n}})">${n}</button>`).join('')}</div>`:`<div>${S.diceN} 顆</div>`}</div>`}
     <div class="card"><div class="lab" style="margin-top:0">玩家 ${S.players.length} / ${S.max}</div><div class="plist">${S.players.map(p=>`<div class="${p.online?'':'off'}">${esc(p.name)}${p.id===S.me?'(你)':''}${p.id===S.host?' · 房主':''}${p.online?'':' · 離線'}</div>`).join('')}</div></div>
-    ${S.me===S.host?`<button class="cta" ${S.players.length>1?'':'disabled'} onclick="act({t:'start'})">${S.players.length>1?'開始遊戲('+S.players.length+' 人)':'至少 2 人才能開始'}</button>`:'<p class="hint">等房主開始遊戲…</p>'}<p class="err">${esc(err)}</p>`);
+    ${S.me===S.host?`<button class="cta" ${(S.players.length>1||S.mode==='roll')?'':'disabled'} onclick="act({t:'start'})">${(S.players.length>1||S.mode==='roll')?'開始遊戲('+S.players.length+' 人)':'至少 2 人才能開始'}</button>`:'<p class="hint">等房主開始遊戲…</p>'}<p class="err">${esc(err)}</p>`);
     return;
   }
   const over=S.phase==='over',isHost=S.me===S.host;
   const again=over?(isHost?'<div style="margin-top:10px"><button class="go" onclick="act({t:\'again\'})">再玩一次</button></div>':'<div class="note">等房主開始下一局</div>'):'';
+  if(S.mode==='roll'){
+    const rolling=document.body.classList.contains('rolling'),me=S.players[meIdx]||{dice:[],rolls:0};
+    const sum=d=>(d||[]).reduce((x,y)=>x+y,0);
+    const mineDice=rolling?(me.dice||[]).map(()=>1+Math.floor(Math.random()*6)):(me.dice||[]);
+    const others=S.players.filter(p=>p.id!==S.me);
+    a.innerHTML=shell(head+`<div class="card"><div class="lab" style="margin-top:0">你的骰子 · ${me.n} 顆 · 擲了 ${me.rolls} 次</div><div class="dice me">${mineDice.map(d=>dieEl(d,true)).join('')}</div>
+      <div class="sum">${rolling?'…':sum(me.dice)}<small>合計</small></div>
+      <div class="row" style="margin-top:12px"><button class="go" onclick="act({t:'roll'})">擲骰</button>${isHost?'<button class="btn" style="min-height:44px" onclick="act({t:\'lobby\'})">回大廳(改骰子數)</button>':''}</div></div>`
+      +(others.length?`<div class="grid">${others.map(p=>`<div class="pl${p.online?'':' off'}"><div class="nm">${esc(p.name)}<small>${p.online?'':'離線 · '}擲了 ${p.rolls} 次 · 合計 ${sum(p.dice)}</small></div><div class="dice still">${(p.dice||[]).map(d=>dieEl(d,true)).join('')}</div></div>`).join('')}</div>`:'')
+      +`<ul id="log">${S.logs.slice().reverse().map(t=>`<li>${esc(t)}</li>`).join('')}</ul>`,true);
+    return;
+  }
   if(S.mode==='bowl'){
     const bw=S.bowl||{n:3,round:1,table:null,acted:[]},rolling=document.body.classList.contains('rolling');
     const myTurn=S.phase==='play'&&S.turn===meIdx&&!bw.table,cur=S.players[S.turn];
