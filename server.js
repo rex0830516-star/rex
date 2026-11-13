@@ -14,11 +14,11 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const hand = (n = 5) => Array.from({ length: n }, () => 1 + Math.floor(Math.random() * 6)).sort();
 const clean = s => String(s || '').replace(/[<>&"'`]/g, '').trim().slice(0, 8) || '玩家';
 
-function newRoom(max, mode) {
+function newRoom(max, mode, dice) {
   let code;
   do code = String(100000 + Math.floor(Math.random() * 900000)); while (rooms.has(code));
   const r = {
-    code, mode, max, phase: 'lobby', host: null, players: [], turn: -1, reveal: -1,
+    code, mode, max, dice, phase: 'lobby', host: null, players: [], turn: -1, reveal: -1,
     showAll: false, bid: null, loser: null, loserName: '', winner: '', result: '',
     msg: '', logs: [], lost: [], deadline: 0, timer: null, busy: false, last: Date.now()
   };
@@ -31,7 +31,7 @@ const log = (r, t) => { r.logs.push(t); r.logs = r.logs.slice(-6); r.msg = t; };
 function view(r, pid) {
   const liar = r.mode === 'liar';
   return {
-    code: r.code, mode: r.mode, max: r.max, phase: r.phase, host: r.host, me: pid, turn: r.turn,
+    code: r.code, mode: r.mode, max: r.max, diceN: r.dice, phase: r.phase, host: r.host, me: pid, turn: r.turn,
     msg: r.msg, logs: r.logs, lost: r.lost, lostIds: r.lostIds || [], deadline: r.deadline, now: Date.now(),
     bid: r.bid, showAll: r.showAll, loser: r.loser, loserName: r.loserName, winner: r.winner, result: r.result,
     players: r.players.map((p, i) => ({
@@ -178,10 +178,12 @@ function act(r, p, b) {
   const isHost = r.host === p.id, liar = r.mode === 'liar', myTurn = r.players[r.turn] === p;
   if (b.t === 'start' && isHost && r.phase === 'lobby' && r.players.length > 1) {
     r.logs = []; r.lost = []; r.lostIds = []; r.winner = '';
-    if (liar) { r.players.forEach(x => x.cnt = 5); liarRound(r, 0); return; }
-    r.players.forEach(x => x.dice = hand());
-    r.phase = 'play'; r.turn = 0; r.reveal = 0; log(r, `輪到${r.players[0].name}`);
+    if (liar) { r.players.forEach(x => x.cnt = r.dice); liarRound(r, 0); return; }
+    r.players.forEach(x => x.dice = hand(r.dice));
+    r.phase = 'play'; r.turn = 0; r.reveal = r.dice > 1 ? 0 : -1; log(r, `輪到${r.players[0].name}`);
     startTurn(r);
+  } else if (b.t === 'setdice' && isHost && r.phase === 'lobby') {
+    r.dice = Math.min(10, Math.max(1, Math.floor(+b.n) || 5));
   } else if (b.t === 'again' && isHost && r.phase === 'over') {
     r.players.filter(x => !x.res).forEach(x => removePlayer(r, x.id));
     if (!rooms.has(r.code)) return;
@@ -231,7 +233,7 @@ http.createServer((req, res) => {
       const pid = String(b.pid || '').slice(0, 40);
       if (!pid) return json(res, 400, { error: '缺少 pid' });
       if (u.pathname === '/api/create') {
-        const r = newRoom(Math.min(8, Math.max(2, +b.max || 2)), b.mode === 'liar' ? 'liar' : 'rb');
+        const r = newRoom(Math.min(8, Math.max(2, +b.max || 2)), b.mode === 'liar' ? 'liar' : 'rb', Math.min(10, Math.max(1, Math.floor(+b.dice) || 5)));
         r.players.push({ id: pid, name: clean(b.name), dice: [], cnt: 0, res: null }); r.host = pid;
         return json(res, 200, { room: r.code });
       }

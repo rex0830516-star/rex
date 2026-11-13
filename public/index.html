@@ -57,6 +57,7 @@ button:focus-visible,input:focus-visible,a:focus-visible{outline:2px solid var(-
 .brand{display:flex;align-items:center;gap:10px;font-weight:600;font-size:15px;color:var(--ink);text-decoration:none;background:none;border:0;padding:0}
 .logo{width:32px;height:32px;border-radius:10px;background:var(--purple-surface);display:grid;place-items:center}
 .logo .die{--s:24px;filter:none}
+.tools{display:flex;gap:2px}
 .ico{width:36px;height:36px;display:grid;place-items:center;border-radius:10px;border:0;background:transparent;color:var(--muted)}
 .ico:hover{background:var(--purple-surface);color:var(--link)}
 
@@ -86,6 +87,7 @@ button:focus-visible,input:focus-visible,a:focus-visible{outline:2px solid var(-
 .inp::placeholder{color:var(--placeholder)}
 .inp:focus{border-color:var(--focus)}
 .opts{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.opts.d5{grid-template-columns:repeat(5,1fr)}
 .opt{border:1px solid var(--line);background:var(--field);border-radius:11px;padding:10px 4px;font-size:14px;font-weight:600;text-align:center}
 .opt:hover{border-color:var(--selected-line)}
 .opt.on{background:var(--selected);border-color:var(--selected-line);color:var(--link)}
@@ -158,7 +160,7 @@ const CATS={red:{n:'紅',f:isRed},black:{n:'黑',f:d=>!isRed(d)},odd:{n:'單',f:
 const KEYS=Object.keys(CATS);
 const MODE_NAME={rb:'紅黑單雙',liar:'吹牛'};
 const HERO={
-  rb:{a:'喊一個顏色',b:'拿光別人的骰子',t:'每人五顆骰子,骰子最先被拿光的人輸。',chips:[{c:'p',d:[1,4]},{c:'m',d:[2,6]}]},
+  rb:{a:'喊一個顏色',b:'拿光別人的骰子',t:'每人一樣多的骰子,骰子最先被拿光的人輸。',chips:[{c:'p',d:[1,4]},{c:'m',d:[2,6]}]},
   liar:{a:'看不見的骰子',b:'你敢信幾成?',t:'輪流叫牌,懷疑就開,猜錯的人失去一顆骰子。',chips:[{c:'p',d:[4,4,1]},{c:'m',d:[4,3]}]},
   invite:{a:'有人邀請你',b:'一起來玩骰子',t:'輸入暱稱,就能加入這個房間。',chips:[{c:'p',d:[1,4]},{c:'m',d:[3,6]}]}
 };
@@ -168,7 +170,7 @@ const store={get:k=>{try{return localStorage.getItem(k)}catch(e){return null}},s
 
 let pid=store.get('hx_pid');
 if(!pid){pid=(crypto.randomUUID?crypto.randomUUID():String(Math.random()).slice(2)+Date.now()).replace(/-/g,'');store.set('hx_pid',pid);}
-let S=null,es=null,room='',mode='rb',tab='create',maxP=2,nick=store.get('hx_nick')||'',err='',offset=0,tick=null,sel={q:1,f:2},lastKey='';
+let S=null,es=null,room='',mode='rb',tab='create',maxP=2,startDice=5,nick=store.get('hx_nick')||'',err='',offset=0,tick=null,sel={q:1,f:2},lastKey='';
 
 /* ---------- 主題 ---------- */
 const savedTheme=store.get('hx_theme');
@@ -179,6 +181,35 @@ function toggleTheme(){
   document.documentElement.setAttribute('data-theme',nx);store.set('hx_theme',nx);
   const m=document.querySelector('meta[name=theme-color]');if(m)m.content=nx==='dark'?'#191622':'#faf8f5';
 }
+
+let soundOn=store.get('hx_sound')!=='0',actx=null,prevTurn=null;
+function shake(long){
+  if(!soundOn)return;
+  try{
+    actx=actx||new (window.AudioContext||window.webkitAudioContext)();
+    if(actx.state==='suspended')actx.resume();
+    const t0=actx.currentTime,hits=long?14:8,span=long?0.9:0.5;
+    for(let i=0;i<hits;i++){
+      const t=t0+i*(span/hits)+Math.random()*0.025,len=0.035+Math.random()*0.03;
+      const buf=actx.createBuffer(1,Math.ceil(actx.sampleRate*len),actx.sampleRate),d=buf.getChannelData(0);
+      for(let k=0;k<d.length;k++)d[k]=(Math.random()*2-1)*Math.pow(1-k/d.length,3);
+      const src=actx.createBufferSource();src.buffer=buf;
+      const f=actx.createBiquadFilter();f.type='bandpass';f.frequency.value=1400+Math.random()*2600;f.Q.value=1.2;
+      const g=actx.createGain();g.gain.value=(0.35+Math.random()*0.35)*(1-i/hits*0.4);
+      src.connect(f);f.connect(g);g.connect(actx.destination);src.start(t);
+    }
+  }catch(e){}
+}
+function toggleSound(){soundOn=!soundOn;store.set('hx_sound',soundOn?'1':'0');if(soundOn)shake(false);render();}
+function turnSound(){
+  const k=S&&S.phase==='play'?S.code+'|'+S.turn:null;
+  if(k&&prevTurn!==k)shake(prevTurn===null||prevTurn.split('|')[0]!==S.code||prevLobby);
+  prevLobby=!S||S.phase==='lobby';
+  prevTurn=k||(S&&S.phase==='lobby'?null:prevTurn);
+}
+let prevLobby=false;
+const ICON_SND_ON='<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4V5Z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/></svg>';
+const ICON_SND_OFF='<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4V5Z"/><path d="m16 9 5 6M21 9l-5 6"/></svg>';
 const ICON_THEME='<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5Z"/></svg>';
 
 /* ---------- 網路 ---------- */
@@ -194,7 +225,7 @@ function connect(code){
   if(es)es.close();
   room=code;
   es=new EventSource(`/api/events?room=${code}&pid=${pid}`);
-  es.onmessage=e=>{S=JSON.parse(e.data);offset=S.now-Date.now();err='';store.set('hx_room',code);history.replaceState(null,'','#'+code);render();};
+  es.onmessage=e=>{S=JSON.parse(e.data);offset=S.now-Date.now();err='';turnSound();store.set('hx_room',code);history.replaceState(null,'','#'+code);render();};
   es.onerror=()=>{if(es.readyState===EventSource.CLOSED){es=null;S=null;room='';store.del('hx_room');history.replaceState(null,'',location.pathname);err='房間已關閉或找不到,請重新建立或加入';render();}};
 }
 function readNick(){const e=$('nick');if(e){nick=(e.value.trim()||'').slice(0,8);store.set('hx_nick',nick);}}
@@ -202,7 +233,8 @@ function goHome(){room='';err='';history.replaceState(null,'',location.pathname)
 function pickMode(m){readNick();mode=m;err='';render();}
 function setTab(t){readNick();tab=t;err='';render();}
 function pickMax(n){readNick();maxP=n;render();}
-async function create(){readNick();const j=await api('create',{name:nick||'玩家',max:maxP,mode});if(j)connect(j.room);}
+function pickDice(n){readNick();startDice=n;render();}
+async function create(){readNick();const j=await api('create',{name:nick||'玩家',max:maxP,dice:startDice,mode});if(j)connect(j.room);}
 async function join(){
   readNick();
   const code=$('code').value.trim();
@@ -256,7 +288,7 @@ function cards(meIdx){
 function shell(inner,wide){
   const brand=S?'<div class="brand">':'<button class="brand" onclick="goHome()">';
   const end=S?'</div>':'</button>';
-  return `<div class="wrap${wide?' wide':''}"><header class="site">${brand}<span class="logo">${dieEl(5,true)}</span><span>骰子遊戲</span>${end}<button class="ico" onclick="toggleTheme()" aria-label="切換深淺色">${ICON_THEME}</button></header>${inner}</div>`;
+  return `<div class="wrap${wide?' wide':''}"><header class="site">${brand}<span class="logo">${dieEl(5,true)}</span><span>骰子遊戲</span>${end}<span class="tools"><button class="ico" onclick="toggleSound()" aria-label="${soundOn?'關閉音效':'開啟音效'}">${soundOn?ICON_SND_ON:ICON_SND_OFF}</button><button class="ico" onclick="toggleTheme()" aria-label="切換深淺色">${ICON_THEME}</button></span></header>${inner}</div>`;
 }
 function entry(a){
   const invited=/^\d{6}$/.test(room);
@@ -266,7 +298,8 @@ function entry(a){
   <div class="chips">${H.chips.map(c=>`<div class="chip ${c.c}">${c.d.map(d=>dieEl(d,true)).join('')}</div>`).join('<span aria-hidden="true">＋</span>')}</div>`;
   const nickBox=`<div class="lab" style="margin-top:${invited?0:16}px">怎麼稱呼你</div><input class="inp" id="nick" maxlength="8" placeholder="給自己取個暱稱" value="${esc(nick)}" onkeydown="if(event.key==='Enter')submitForm()">`;
   const body=isCreate
-    ?`${nickBox}<div class="lab">這次幾個人玩</div><div class="opts">${[2,3,4,5,6,7,8].map(n=>`<button class="opt${n==maxP?' on':''}" onclick="pickMax(${n})">${n} 人</button>`).join('')}</div>
+    ?`${nickBox}<div class="lab">人數上限(2 人以上就能開始,不必坐滿)</div><div class="opts">${[2,3,4,5,6,7,8].map(n=>`<button class="opt${n==maxP?' on':''}" onclick="pickMax(${n})">${n} 人</button>`).join('')}</div>
+      <div class="lab">每人幾顆骰子</div><div class="opts d5">${[1,2,3,4,5,6,7,8,9,10].map(n=>`<button class="opt${n==startDice?' on':''}" onclick="pickDice(${n})">${n}</button>`).join('')}</div>
       <button class="cta" onclick="create()">建立房間 ↗</button><p class="hint">建立房間後分享連結邀請朋友,人齊就開始。</p>`
     :`${nickBox}<div class="lab">房間代碼</div><input class="inp" id="code" inputmode="numeric" maxlength="6" placeholder="6 位數房間代碼" value="${esc(room)}" onkeydown="if(event.key==='Enter')submitForm()">
       <button class="cta" onclick="join()">加入房間</button>`;
@@ -277,7 +310,7 @@ function minRaise(){
   if(!S.bid)return{q:1,f:2};
   return S.bid.f<6?{q:S.bid.q,f:S.bid.f+1}:{q:S.bid.q+1,f:1};
 }
-function setQ(d){sel.q+=d;render();}
+function setQ(d){const tot=S.players.reduce((s,p)=>s+p.n,0),lo=S.bid?S.bid.q:1;sel.q=Math.min(tot,Math.max(lo,sel.q+d));render();}
 function setF(f){sel.f=f;render();}
 function doBid(){act({t:'bid',q:sel.q,f:sel.f});}
 
@@ -288,8 +321,9 @@ function render(){
   const head=`<div class="roomhead"><span class="tag">${MODE_NAME[S.mode]} · 房間 ${S.code}</span><span class="row"><button class="btn" id="cp" onclick="copyLink()">複製邀請連結</button><button class="btn" onclick="leave()">離開</button></span></div>`;
   if(S.phase==='lobby'){
     a.innerHTML=shell(head+`<div class="card"><div class="note">把連結傳給朋友,或告訴他們代碼</div><div class="code">${esc(S.code)}</div></div>
+    <div class="card"><div class="lab" style="margin-top:0">每人幾顆骰子</div>${S.me===S.host?`<div class="opts d5">${[1,2,3,4,5,6,7,8,9,10].map(n=>`<button class="opt${n==S.diceN?' on':''}" onclick="act({t:'setdice',n:${n}})">${n}</button>`).join('')}</div>`:`<div>${S.diceN} 顆</div>`}</div>
     <div class="card"><div class="lab" style="margin-top:0">玩家 ${S.players.length} / ${S.max}</div><div class="plist">${S.players.map(p=>`<div class="${p.online?'':'off'}">${esc(p.name)}${p.id===S.me?'(你)':''}${p.id===S.host?' · 房主':''}${p.online?'':' · 離線'}</div>`).join('')}</div></div>
-    ${S.me===S.host?`<button class="cta" ${S.players.length>1?'':'disabled'} onclick="act({t:'start'})">開始遊戲</button>`:'<p class="hint">等房主開始遊戲…</p>'}<p class="err">${esc(err)}</p>`);
+    ${S.me===S.host?`<button class="cta" ${S.players.length>1?'':'disabled'} onclick="act({t:'start'})">${S.players.length>1?'開始遊戲('+S.players.length+' 人)':'至少 2 人才能開始'}</button>`:'<p class="hint">等房主開始遊戲…</p>'}<p class="err">${esc(err)}</p>`);
     return;
   }
   const over=S.phase==='over',isHost=S.me===S.host;
@@ -314,7 +348,7 @@ function render(){
   const minQ=S.bid?S.bid.q:1;
   const bid=S.bid?`<div class="bid"><span>${esc(S.bid.name)} 叫</span><span>${S.bid.q} 個 ${S.bid.f} 點</span>${dieEl(S.bid.f,true)}</div>`:(S.phase==='play'?'<div class="bid none">還沒有人叫牌</div>':'');
   const verdict=(over&&S.loserName)?`<div class="verdict"><span>敗者</span><b>${esc(S.loserName)}</b></div>`:'';
-  const ctl=myTurn?`<div class="ctl"><div class="step"><button onclick="setQ(-1)" ${sel.q>minQ?'':'disabled'} aria-label="減少數量">−</button><b>${sel.q}</b><button onclick="setQ(1)" ${sel.q<total?'':'disabled'} aria-label="增加數量">＋</button><span class="note">個(場上共 ${total} 顆)</span></div>
+  const ctl=myTurn?`<div class="ctl"><div class="step">${total>15?`<button onclick="setQ(-5)" ${sel.q>minQ?'':'disabled'} aria-label="減少 5 個">−5</button>`:''}<button onclick="setQ(-1)" ${sel.q>minQ?'':'disabled'} aria-label="減少數量">−</button><b>${sel.q}</b><button onclick="setQ(1)" ${sel.q<total?'':'disabled'} aria-label="增加數量">＋</button>${total>15?`<button onclick="setQ(5)" ${sel.q<total?'':'disabled'} aria-label="增加 5 個">＋5</button>`:''}<span class="note">個(場上共 ${total} 顆)</span></div>
     <div class="faces">${[1,2,3,4,5,6].map(f=>`<button class="fb${isRed(f)?' red':''}${sel.f===f?' on':''}" onclick="setF(${f})" aria-label="${f} 點">${f}</button>`).join('')}</div>
     ${(!valid&&S.bid)?'<div class="note">要比上一個叫牌更大:數量更多,或數量相同、點數更大。</div>':''}
     <div class="row"><button class="go" ${valid?'':'disabled'} onclick="doBid()">叫牌</button><button class="btn" style="min-height:44px" ${S.bid?'':'disabled'} onclick="act({t:'challenge'})">開牌</button></div></div>`:'';
